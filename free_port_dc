@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+
+# free port utility function
+function free_port() {
+    docker run --rm --network=host orwa84/free_port $1
+}
+
+#set -x
+set -a
+
+if ! command -v docker >/dev/null 2>&1; then
+cat <<EOF >&2
+[33mfree_port_dc[0m stands for “[3;33mfree-port Docker Compose[0m” which implies that it uses Docker.
+[2mPlease install Docker if you would like to try this script.[0m
+EOF
+exit 1
+fi
+
+FREE_PORT_IMAGE=$(docker image inspect -f '{{.Metadata.LastTagTime}}' orwa84/free_port 2>/dev/null)
+if [[ $? -ne 0 ]]; then
+cat <<EOF
+[33mfree_port_dc[0m uses the docker image “[3;33morwa84/free_port[0m” which needs to be downloaded from
+Docker hub. [2mThis image is only 6MB in size, it is now being downloaded...[0m
+EOF
+docker pull orwa84/free_port:latest >/dev/null 2>&1
+if [[ $? -ne 0 ]]; then
+cat <<EOF >&2
+[31mFailed to download the Docker image, please check your internet connection and try again.[0m
+EOF
+exit 4
+fi 
+cat <<EOF
+[32mImage 'orwa84/free_port' downloaded successfully, proceeding...[0m
+EOF
+else
+#cat <<EOF
+#[32mDocker image 'orwa84/free_port' exists and will be used.[0m
+#[2m(this image is from $(echo $FREE_PORT_IMAGE | awk '{print $1}'), to update the image run [4mdocker pull orwa84/free_port[24m)[0m
+#EOF
+:
+fi
+
+if ! command -v yq >/dev/null 2>&1; then
+cat <<EOF >&2
+[33mfree_port_dc[0m uses [33myq[0m which is a quite-useful “[3;33myaml querying & processing[0m” utility,
+if you wish to use this script, then you must install this cli utility first.
+[2mFind installation instructions at https://github.com/mikefarah/yq/#install[0m
+EOF
+exit 2
+fi
+
+if command -v md5 >/dev/null; then MD5_COMMAND=md5; fi
+if command -v md5sum >/dev/null; then MD5_COMMAND=md5sum; fi
+
+if [[ -z MD5_COMMAND ]] then
+[33mfree_port_dc[0m requires [33mmd5[0m or [33mmd5sum[0m which are easily installed on most Unix-like systems.
+[2mPlease install either command and try running this script again.[0m
+exit 3
+fi
+
+
+CAPTURE=
+PARAMS=( $@ )
+declare -a FILE_PARAMS
+declare -a REST_PARAMS
+
+DRY_RUN=
+INTERACTIVE=
+while [[ ${PARAMS[0]} =~ ^(dry-run|interactive)$ ]]; do
+if [[ ${PARAMS[0]} == "dry-run" && -z $DRY_RUN ]]; then 
+cat <<EOF
+[34;1m${0##*/} INVOKED IN DRY-RUN MODE[0m
+EOF
+DRY_RUN=1
+fi
+if [[ ${PARAMS[0]} == "interactive" && -z $INTERACTIVE ]]; then 
+cat <<EOF
+[34;1m${0##*/} INVOKED IN INTERACTIVE MODE[0m
+EOF
+INTERACTIVE=1
+
+if [[ -n $EDITOR ]]; then
+    if ! command -v $(echo $EDITOR | awk '{print $1}') >/dev/null; then 
+    EDITOR=
+    else
+cat <<EOF >&2
+[33mEditor configuratin found in the environment [0m([2m\$EDITOR='$EDITOR'[0m)
+EOF
+    fi
+fi
+
+if [[ -z $EDITOR ]]; then
+    if ! command -v code >/dev/null; then
+        if ! command -v nano >/dev/null; then
+            if ! command -v vim >/dev/null; then
+cat <<EOF >&2
+[31m\$EDITOR is not set and no editors were found, aborting interactive invocation...[0m
+[2m(editors are searched in this order: \$EDITOR, vscode, nano, vim)[0m
+EOF
+exit 5
+            else
+            EDITOR="vim"
+            fi
+        else
+        EDITOR="nano"
+        fi
+    else
+    EDITOR='code --wait'
+    fi
+fi
+
+#printf "selected editor is '%s'\n" "${EDITOR[*]}"
+fi
+
+PARAMS=( "${PARAMS[*]:1}" )
+done
+
+for (( i = 0 ; i - ${#PARAMS[*]} ; i = i + 1 )) do
+# printf "%d: %s\n" $i ${PARAMS[$i]}
+if [[ -n $CAPTURE ]]; then
+    FILE_PARAMS+=( ${PARAMS[$i]} )
+    CAPTURE=
+elif [[ ${PARAMS[$i]} == '-f' || ${PARAMS[$i]} == '--file' ]]; then
+    FILE_PARAMS+=( ${PARAMS[$i]} )
+    CAPTURE=1
+else
+    REST_PARAMS+=( ${PARAMS[$i]} )
+fi
+done
+
+# printf "file params: '%s', rest params: '%s'\n" "${FILE_PARAMS[*]}" "${REST_PARAMS[*]}"
+
+if [[ -z $CAPTURE ]]; then
+docker compose ${FILE_PARAMS[*]} config >/dev/null 2>&1
+fi
+
+if [[ -n $CAPTURE || $? -ne 0 ]]; then 
+cat <<EOF
+[31mBypassing ${0##*/}, invoking docker compose instead...[0m
+EOF
+docker compose $@
+exit 0
+fi
+
+if [[ -n $INTERACTIVE ]]; then
+if [[ ${#FILE_PARAMS[*]} -gt 0 ]]; then
+cat <<EOF
+[31mIgnoring options ${#FILE_PARAMS[*]@Q} in interactive mode...[0m
+EOF
+fi
+touch /tmp/free_port_dc_draft.yaml
+cat <<EOF > /tmp/free_port_dc_draft.yaml
+# This is a sample Docker compose file, modify as you wish
+services:
+  service1:
+    image: service1:latest
+    container_name: service1
+    ports:
+      - "8080:8080"
+    volumes:
+      - service1-data:/app/data
+    environment:
+      - NODE_ENV=production
+    networks:
+      - my-network
+
+networks:
+  my-network:
+
+volumes:
+  service1-data:
+EOF
+eval $EDITOR /tmp/free_port_dc_draft.yaml
+DOCKER_FILE_CONTENT=$(docker compose -f /tmp/free_port_dc_draft.yaml config)
+rm /tmp/free_port_dc_draft.yaml
+else
+DOCKER_FILE_CONTENT=$(docker compose ${FILE_PARAMS[*]} config)
+fi
+
+#cat <<EOF
+#[32m${0##*/} Obtained Docker config[0m
+#EOF
+
+PORT_ENV_EXPORTS=$(echo "$DOCKER_FILE_CONTENT" | yq '.services.*.ports[].published | sub("^([0-9]+)$","export FREE_PORT_$1=$$(free_port $1)")')
+#printf "\x1b[2m%s\x1b[24m\n" "$PORT_ENV_EXPORTS"
+eval "$PORT_ENV_EXPORTS"
+
+SOURCE_PORTS=( $(echo "$DOCKER_FILE_CONTENT" | yq '.services.*.ports[].target | "FREE_PORT_\(.)"') )
+DESTINATION_PORTS=( $(echo "$DOCKER_FILE_CONTENT" | yq '.services.*.ports[].published' ) )
+SORTED_DEST_PORTS=( $(echo "${DESTINATION_PORTS[*]}" | sort -gu) )
+if [[ ${#DESTINATION_PORTS[*]} -ne ${#SORTED_DEST_PORTS[*]} ]]; then
+IFS=,
+cat <<EOF
+[31mThis docker compose config is not supported, aborting...
+[2m- Dest ports (${#SOURCE_PORTS[*]}): ${SOURCE_PORTS[*]}
+- Unique dest ports (${#SORTED_DEST_PORTS[*]}): ${SORTED_DEST_PORTS[*]}[22m
+[0m
+EOF
+exit 4
+fi
+
+IFS=', '
+DEST_PORTS_STRING=${SORTED_DEST_PORTS[*]}
+IFS='_'
+DEST_PORTS_SIG=${SORTED_DEST_PORTS[*]}
+IFS=' '
+
+DOCKER_FILE_CONTENT=$(echo "$DOCKER_FILE_CONTENT" | yq '.services.*.ports[].published |= sub("^([0-9]+)$","$${FREE_PORT_$1}")')
+HASH_CONTENT=$(echo "$DOCKER_FILE_CONTENT" | $MD5_COMMAND | awk '{print $1}')
+HASH_CONTENT=${HASH_CONTENT:0:16}
+DOCKER_FILE_CONTENT=$(docker compose -f <(echo "$DOCKER_FILE_CONTENT") config)
+
+cat <<EOF
+[32m${0##*/} Invoking Docker compose with replaced ports[0m ([2m$DEST_PORTS_STRING[0m): [4mdocker compose ${REST_PARAMS[*]}[0m
+EOF
+
+HASH_SIG="${HASH_CONTENT}_$DEST_PORTS_SIG"
+TMP_DOCKER_COMPOSE_FILE_LOCATION=/tmp/$HASH_SIG.yaml
+
+echo "$DOCKER_FILE_CONTENT" > $TMP_DOCKER_COMPOSE_FILE_LOCATION
+
+#printf "\x1b[1;30mDRY-RUN: %s\x1b[0m" $DRY_RUN
+if [[ -z $DRY_RUN ]]; then
+docker compose -f "$TMP_DOCKER_COMPOSE_FILE_LOCATION" ${REST_PARAMS[*]}
+else
+IFS='|'
+cat <<EOF
+[34;1mDry-run invocation is finished. Now you can:[22m
+[2m- Inspect the resulting yaml using [4mcat $TMP_DOCKER_COMPOSE_FILE_LOCATION | yq[24;22m
+[2m- Inspect the selected ports using [4menv | grep -E '^FREE_PORT_.*=(${SORTED_DEST_PORTS[*]})$'[24;22m
+[0m
+EOF
+fi
