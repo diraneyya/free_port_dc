@@ -16,6 +16,14 @@ EOF
 exit 1
 fi
 
+ERROR_FROM_DOCKER=$(docker version 2>&1 1>/dev/null)
+if [[ $? -ne 0 ]]; then
+cat <<EOF
+[31m$ERROR_FROM_DOCKER[0m
+EOF
+exit 6
+fi
+
 FREE_PORT_IMAGE=$(docker image inspect -f '{{.Metadata.LastTagTime}}' orwa84/free_port 2>/dev/null)
 if [[ $? -ne 0 ]]; then
 cat <<EOF
@@ -49,15 +57,17 @@ EOF
 exit 2
 fi
 
-if command -v md5 >/dev/null; then MD5_COMMAND=md5; fi
-if command -v md5sum >/dev/null; then MD5_COMMAND=md5sum; fi
-
-if [[ -z MD5_COMMAND ]] then
+if command -v md5 >/dev/null; then 
+MD5_COMMAND=md5; 
+elif command -v md5sum >/dev/null; then 
+MD5_COMMAND=md5sum; 
+else
+cat <<EOF >&2
 [33mfree_port_dc[0m requires [33mmd5[0m or [33mmd5sum[0m which are easily installed on most Unix-like systems.
 [2mPlease install either command and try running this script again.[0m
+EOF
 exit 3
 fi
-
 
 CAPTURE=
 PARAMS=( $@ )
@@ -71,13 +81,15 @@ if [[ ${PARAMS[0]} == "dry-run" && -z $DRY_RUN ]]; then
 cat <<EOF
 [34;1m${0##*/} INVOKED IN DRY-RUN MODE[0m
 EOF
-DRY_RUN=1
+
+DRY_RUN='1'
 fi
 if [[ ${PARAMS[0]} == "interactive" && -z $INTERACTIVE ]]; then 
 cat <<EOF
 [34;1m${0##*/} INVOKED IN INTERACTIVE MODE[0m
 EOF
-INTERACTIVE=1
+
+INTERACTIVE='1'
 
 if [[ -n $EDITOR ]]; then
     if ! command -v $(echo $EDITOR | awk '{print $1}') >/dev/null; then 
@@ -129,19 +141,7 @@ fi
 done
 
 # printf "file params: '%s', rest params: '%s'\n" "${FILE_PARAMS[*]}" "${REST_PARAMS[*]}"
-
 if [[ -z $CAPTURE ]]; then
-docker compose ${FILE_PARAMS[*]} config >/dev/null 2>&1
-fi
-
-if [[ -n $CAPTURE || $? -ne 0 ]]; then 
-cat <<EOF
-[31mBypassing ${0##*/}, invoking docker compose instead...[0m
-EOF
-docker compose $@
-exit 0
-fi
-
 if [[ -n $INTERACTIVE ]]; then
 if [[ ${#FILE_PARAMS[*]} -gt 0 ]]; then
 cat <<EOF
@@ -171,22 +171,34 @@ volumes:
   service1-data:
 EOF
 eval $EDITOR /tmp/free_port_dc_draft.yaml
-DOCKER_FILE_CONTENT=$(docker compose -f /tmp/free_port_dc_draft.yaml config)
+DOCKER_FILE_CONTENT=$(docker compose -f /tmp/free_port_dc_draft.yaml config 2>/dev/null)
+DOCKER_CONFIG_RESULT=$?
 rm /tmp/free_port_dc_draft.yaml
 else
-DOCKER_FILE_CONTENT=$(docker compose ${FILE_PARAMS[*]} config)
+DOCKER_FILE_CONTENT=$(docker compose ${FILE_PARAMS[*]} config 2>/dev/null)
+DOCKER_CONFIG_RESULT=$?
+fi
+fi
+
+if [[ -n $CAPTURE || $DOCKER_CONFIG_RESULT -ne 0 ]]; then 
+cat <<EOF
+[31mBypassing ${0##*/}, invoking docker compose instead...[0m
+EOF
+docker compose $@
+exit 0
 fi
 
 #cat <<EOF
 #[32m${0##*/} Obtained Docker config[0m
-#EOF
+#EOF2
 
+DOCKER_FILE_CONTENT=$(echo "$DOCKER_FILE_CONTENT" | yq '.services.*.ports[] |= select(.published == null) |= .published = "\(.target)"')
 PORT_ENV_EXPORTS=$(echo "$DOCKER_FILE_CONTENT" | yq '.services.*.ports[].published | sub("^([0-9]+)$","export FREE_PORT_$1=$$(free_port $1)")')
 #printf "\x1b[2m%s\x1b[24m\n" "$PORT_ENV_EXPORTS"
 eval "$PORT_ENV_EXPORTS"
 
 SOURCE_PORTS=( $(echo "$DOCKER_FILE_CONTENT" | yq '.services.*.ports[].target | "FREE_PORT_\(.)"') )
-DESTINATION_PORTS=( $(echo "$DOCKER_FILE_CONTENT" | yq '.services.*.ports[].published' ) )
+DESTINATION_PORTS=( $(echo "$DOCKER_FILE_CONTENT" | yq '.services.*.ports[] | .published // "\(.target)"' ) )
 SORTED_DEST_PORTS=( $(echo "${DESTINATION_PORTS[*]}" | sort -gu) )
 if [[ ${#DESTINATION_PORTS[*]} -ne ${#SORTED_DEST_PORTS[*]} ]]; then
 IFS=,
