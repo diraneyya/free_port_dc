@@ -3,22 +3,23 @@ services:
   postgres:
     container_name: portainer-postgres
     image: ubuntu/postgres:latest
+    user: "0:0"
     restart: always
     shm_size: 128mb
     environment:
-      PGDATA: /mnt/postgres
+      PGDATA: /mnt/postgres/data
       POSTGRES_USER: portainer
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password 
     volumes:
-      - /portainer/Files/AppData/postgres:/mnt/postgres
+      - type: bind
+        source: /portainer/Files/AppData/postgres
+        target: /mnt/postgres
+        read_only: false
     ports:
       - 5432:5432
-    configs:
-      - source: postgres_hba
-        target: /mnt/postgres/pg_hba.conf
-        gid: "999"
-        uid: "999"
-        mode: 0750
+    # configs:
+    #   - source: postgres_hba
+    #     target: /mnt/postgres/pg_hba.conf
     secrets:
       - postgres_password
     networks:

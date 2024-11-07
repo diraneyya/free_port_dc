@@ -2,7 +2,8 @@
 
 # free port utility function
 function free_port() {
-    docker run --rm --network=host orwa84/free_port $1
+    #docker run --rm --network=host orwa84/free_port $1
+    ./free_port $1
 }
 
 #set -x
@@ -124,11 +125,11 @@ fi
 #printf "selected editor is '%s'\n" "${EDITOR[*]}"
 fi
 
-PARAMS=( "${PARAMS[*]:1}" )
+PARAMS=( ${PARAMS[*]:1} )
 done
 
-for (( i = 0 ; i - ${#PARAMS[*]} ; i = i + 1 )) do
-# printf "%d: %s\n" $i ${PARAMS[$i]}
+for (( i = 0 ; i - ${#PARAMS[*]} ; i = i + 1 )); do
+#printf "%d: '%s'\n" $i ${PARAMS[$i]}
 if [[ -n $CAPTURE ]]; then
     FILE_PARAMS+=( ${PARAMS[$i]} )
     CAPTURE=
@@ -171,21 +172,24 @@ volumes:
   service1-data:
 EOF
 eval $EDITOR /tmp/free_port_dc_draft.yaml
-DOCKER_FILE_CONTENT=$(docker compose -f /tmp/free_port_dc_draft.yaml config 2>/dev/null)
+DOCKER_FILE_CONTENT=$(docker compose -f /tmp/free_port_dc_draft.yaml config 2>&1)
 DOCKER_CONFIG_RESULT=$?
-rm /tmp/free_port_dc_draft.yaml
+#rm /tmp/free_port_dc_draft.yaml
 else
-DOCKER_FILE_CONTENT=$(docker compose ${FILE_PARAMS[*]} config 2>/dev/null)
+DOCKER_FILE_CONTENT=$(docker compose ${FILE_PARAMS[*]} config 2>&1)
 DOCKER_CONFIG_RESULT=$?
 fi
 fi
 
 if [[ -n $CAPTURE || $DOCKER_CONFIG_RESULT -ne 0 ]]; then 
-cat <<EOF
-[31mBypassing ${0##*/}, invoking docker compose instead...[0m
-EOF
-docker compose $@
-exit 0
+# echo $DOCKER_FILE_CONTENT > /tmp/free_port_dc_draft.yaml
+# cat <<EOF
+# [31mBypassing ${0##*/} [$DOCKER_CONFIG_RESULT], invoking[0m ([2mdocker compose ${FILE_PARAMS[*]:\(interactive input\)} config[0m)
+# [31;2mTo troubleshoot type [4mcat /tmp/free_port_dc_draft.yaml | yq[0m
+# EOF
+# docker compose $@
+printf "\x1B[31m%s\x1B[0m\n" "$DOCKER_FILE_CONTENT"
+exit $DOCKER_CONFIG_RESULT
 fi
 
 #cat <<EOF
@@ -211,6 +215,48 @@ EOF
 exit 4
 fi
 
+function call_pwgen {
+  echo $( pwgen $1 -1 "$2" "$(( $RANDOM >> 9 ))" | tail -n 1 )
+}
+
+# translate secrets
+EXTERNAL_SECRETS=( $(echo "$DOCKER_FILE_CONTENT" | yq '.secrets[] | select(.external == true) | .name') )
+if [[ $? -eq 0 && ${#EXTERNAL_SECRETS[*]} -gt 0 ]]; then
+cat <<EOF
+[35;1mProcessing external secrets (${#EXTERNAL_SECRETS[*]} found)[22m
+EOF
+
+PWD=$(pwd)
+PWD=${PWD/#${HOME}/\~}
+
+for secret in ${EXTERNAL_SECRETS[*]}; do
+if [[ -f "./secrets/${secret}.txt" ]]; then
+echo -e "- Secret \x1B[1m$secret\x1B[22m exists at $PWD, and will be used"
+else
+echo -e "- Secret \x1B[1m$secret\x1B[22m not found at $PWD, creating a new secret"
+echo -n -e "  \x1B[2;4mEnter type of secret\x1B[24m [\x1B[22mU\x1B[2msername|\x1B[22mP\x1B[2massword|\x1B[22mL\x1B[2mong Password]:\x1B[22m "
+
+while true; do
+read -n 1
+case $REPLY in
+  [Uu]) PWGEN_OPTIONS='-0'; PWGEN_LENGTH=$(( 9 + ( $RANDOM >> 13 ) )); break ;;
+  [Ll]) PWGEN_OPTIONS='-ycs'; PWGEN_LENGTH=50; break ;;
+  [Pp]) PWGEN_OPTIONS='-ycs'; PWGEN_LENGTH=25; break ;;
+  *) echo -n -e '\b \b'
+esac
+done
+echo -n -e "\x1B1K\x1B[0G"
+echo "$( call_pwgen $PWGEN_OPTIONS $PWGEN_LENGTH )" > "./secrets/${secret}.txt"
+fi
+done
+
+echo -n -e "\x1B[0m"
+
+# update the configs with the secrets
+DOCKER_FILE_CONTENT=$( echo "$DOCKER_FILE_CONTENT" | yq ".secrets[] |= select(.external == true) |= {del(.external), .file = \"$(pwd)/secrets/\\(.name).txt\"}" )
+
+fi
+
 IFS=', '
 DEST_PORTS_STRING=${SORTED_DEST_PORTS[*]}
 IFS='_'
@@ -233,13 +279,14 @@ echo "$DOCKER_FILE_CONTENT" > $TMP_DOCKER_COMPOSE_FILE_LOCATION
 
 #printf "\x1b[1;30mDRY-RUN: %s\x1b[0m" $DRY_RUN
 if [[ -z $DRY_RUN ]]; then
+echo -n -e "\x1B[0m"
 docker compose -f "$TMP_DOCKER_COMPOSE_FILE_LOCATION" ${REST_PARAMS[*]}
 else
 IFS='|'
 cat <<EOF
 [34;1mDry-run invocation is finished. Now you can:[22m
 [2m- Inspect the resulting yaml using [4mcat $TMP_DOCKER_COMPOSE_FILE_LOCATION | yq[24;22m
-[2m- Inspect the selected ports using [4menv | grep -E '^FREE_PORT_.*=(${SORTED_DEST_PORTS[*]})$'[24;22m
+[2m- Check the selected ports: [4m$(env | grep -E "^FREE_PORT_.*=(${SORTED_DEST_PORTS[*]})\$")[24;22m
 [0m
 EOF
 fi
