@@ -1,0 +1,15 @@
+name: dpaste
+services:
+  web:
+    image: darrenofficial/dpaste:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: sqlite:////db/dpaste.sqlite
+      PORT: 8000
+    volumes:
+      - dpaste:/db
+    ports:
+      - "8000:8000"
+
+volumes:
+  dpaste:

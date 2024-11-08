@@ -3,7 +3,7 @@
 # free port utility function
 function free_port() {
     #docker run --rm --network=host orwa84/free_port $1
-    ./free_port $1
+    $(dirname $0)/free_port $1
 }
 
 #set -x
@@ -172,11 +172,11 @@ volumes:
   service1-data:
 EOF
 eval $EDITOR /tmp/free_port_dc_draft.yaml
-DOCKER_FILE_CONTENT=$(docker compose -f /tmp/free_port_dc_draft.yaml config 2>&1)
+DOCKER_FILE_CONTENT=$(docker compose -f /tmp/free_port_dc_draft.yaml config --no-interpolate 2>/dev/null)
 DOCKER_CONFIG_RESULT=$?
 #rm /tmp/free_port_dc_draft.yaml
 else
-DOCKER_FILE_CONTENT=$(docker compose ${FILE_PARAMS[*]} config 2>&1)
+DOCKER_FILE_CONTENT=$(docker compose ${FILE_PARAMS[*]} config --no-interpolate 2>/dev/null)
 DOCKER_CONFIG_RESULT=$?
 fi
 fi
@@ -188,6 +188,11 @@ if [[ -n $CAPTURE || $DOCKER_CONFIG_RESULT -ne 0 ]]; then
 # [31;2mTo troubleshoot type [4mcat /tmp/free_port_dc_draft.yaml | yq[0m
 # EOF
 # docker compose $@
+if [[ -n $INTERACTIVE ]]; then
+DOCKER_FILE_CONTENT=$(docker compose -f /tmp/free_port_dc_draft.yaml config --no-interpolate 2>&1 1>/dev/null)
+else
+DOCKER_FILE_CONTENT=$(docker compose ${FILE_PARAMS[*]} config --no-interpolate 2>&1 1>/dev/null)
+fi
 printf "\x1B[31m%s\x1B[0m\n" "$DOCKER_FILE_CONTENT"
 exit $DOCKER_CONFIG_RESULT
 fi
