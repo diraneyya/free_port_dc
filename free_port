@@ -23,6 +23,10 @@ PORTS=( 0 $(netstat -tuln | grep -Ei '^(tcp|udp).*LISTEN *$' | awk '{print $4}' 
     awk -F ':+' '{print $2}' | sort -gu) 65536 )
 fi
 
+if [[ -n $DEBUG ]]; then
+echo "${PORTS[*]}"
+fi
+
 if [[ ${#PORTS[*]} -le 2 ]]; then
 echo "Did you forget to pass '--network=host' to the docker run command?" >&2
 exit 3
