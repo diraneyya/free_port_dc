@@ -2,7 +2,7 @@
 **TL;DR**
 `fpdc` is a convenience wrapper for `docker compose` written as a shell script
 
-**fpdc** stands for _Free-Port Docker Compose_ promising a simple functionality: not having to worry about what ports are open and which ones are taken on the host when spinning up services for trail and testing purposes.
+**fpdc** stands for _Free-Port Docker Compose_ promising a simple functionality: not having to worry about what ports are open and which ones are taken on the host when spinning up services for trial and testing purposes.
 
 The current wrapper is in an early alpha stage where I am just experimenting with _comfort features_ that I personally like to have. Depending on what the future holds, the wrapper can be entirely re-written or changed based on the reaction from the community.
 
